@@ -54,7 +54,6 @@ scratch/
 *.hdf5
 *.nc
 datasets/
-data/
 
 # OS generated files
 .DS_Store
