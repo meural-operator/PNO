@@ -1,0 +1,23 @@
+data:
+  n_samples: 1200
+  path: C:/Users/DIAT/opeartor_learning/ICML_rebuttal/datasets/Burgers/1D_Burgers_Sols_Nu0.1.hdf5
+  sub: 4
+  t_target_idx: -1
+  train_ratio: 0.8
+experiment_name: Ablation_Burgers1D_p3_L3_H2
+model:
+  L: 8
+  d_in: 1
+  d_model: 48
+  d_out: 1
+  dropout: 0.0
+  kernel_type: exponential
+  mlp_ratio: 2.0
+  n_heads: 2
+  n_layers: 3
+  p: 3
+training:
+  batch_size: 64
+  epochs: 500
+  learning_rate: 0.001
+  weight_decay: 0.0001

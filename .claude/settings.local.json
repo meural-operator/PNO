@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(conda run -n padic python -c ':*)",
+      "Bash(where conda:*)",
+      "Read(//c/Users/DIAT/anaconda3/condabin/**)",
+      "Read(//c/Users/DIAT/miniconda3/condabin/**)",
+      "Read(//c/ProgramData/anaconda3/condabin/**)",
+      "Read(//c/ProgramData/miniconda3/condabin/**)",
+      "Bash(/c/Users/DIAT/miniconda3/condabin/conda.bat run:*)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(echo \"EXIT:$?\")"
+    ]
+  }
+}

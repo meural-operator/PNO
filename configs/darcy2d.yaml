@@ -1,0 +1,34 @@
+experiment_name: "DarcyFlow2D_Standard"
+data:
+  dataset_type: "darcy2d"
+  path: "C:/Users/DIAT/opeartor_learning/ICML_rebuttal/datasets/DarcyFlow/2D_DarcyFlow_beta1.0_Train.hdf5"
+  n_samples: 10000
+  train_ratio: 0.8
+  val_ratio: 0.1
+  sub: 2  # 128 -> 64 points per dim = 4096 total points
+
+model:
+  d_in: 1         # nu coefficient field (grid coords handled by pos encoding)
+  d_out: 1        # solution u
+  d_model: 64
+  n_layers: 4
+  n_heads: 4
+  p: 3
+  L: 8
+  kernel_type: "exponential"
+  mlp_ratio: 4.0
+  dropout: 0.05
+  content_blend: 0.1
+  n_fourier_freq: 32
+  fourier_sigma: 10.0
+
+training:
+  batch_size: 16
+  epochs: 500
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  warmup_epochs: 25
+  grad_clip_norm: 1.0
+  use_amp: true
+  early_stopping_patience: 100
+  num_workers: 4
