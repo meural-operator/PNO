@@ -12,8 +12,8 @@ model:
   d_model: 96
   n_layers: 6
   n_heads: 4
-  p: 2
-  L: 10
+  p: 3
+  L: 7
   kernel_type: "exponential"
   mlp_ratio: 2.0
   dropout: 0.05
