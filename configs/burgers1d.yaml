@@ -13,7 +13,7 @@ model:
   n_layers: 6
   n_heads: 4
   p: 3
-  L: 7
+  L: 6
   kernel_type: "exponential"
   mlp_ratio: 2.0
   dropout: 0.05
@@ -29,3 +29,5 @@ training:
   use_amp: true
   early_stopping_patience: 100
   num_workers: 4
+  use_sobolev: true
+  sobolev_lambda: 0.5

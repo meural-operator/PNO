@@ -162,6 +162,8 @@ def main():
         use_amp=train_cfg.get("use_amp", True),
         early_stopping_patience=train_cfg.get("early_stopping_patience", 0),
         grid_dims=data_cfg.get("grid_dims", 1),
+        use_sobolev=train_cfg.get("use_sobolev", False),
+        sobolev_lambda=train_cfg.get("sobolev_lambda", 0.5),
     )
 
     print("Starting training...")

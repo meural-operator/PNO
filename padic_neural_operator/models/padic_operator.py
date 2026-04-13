@@ -3,30 +3,47 @@ import torch
 from torch import Tensor
 import torch.nn as nn
 from padic_neural_operator.layers.attention import PAdicAttention
-
-
-class FourierPositionalEncoding(nn.Module):
+from padic_neural_operator.layers.integral import PAdicIntegralLayer
+from padic_neural_operator.core.padic import padic_address
+class PAdicPositionalEncoding(nn.Module):
     """
-    Fourier feature encoding for spatial coordinates.
+    P-Adic Positional Encoding for spatial coordinates.
 
-    Maps coordinates x in [0,1)^d to a higher-dimensional space using
-    random Fourier features: [sin(2*pi*B*x), cos(2*pi*B*x)] where B
-    is drawn from N(0, sigma^2).
-
-    This helps the model learn high-frequency functions — critical for
-    PDE solutions with sharp gradients (e.g., Burgers shocks).
+    Maps coordinates x in [0,1)^d via their structural base-p digit expansion
+    to represent their exact coordinate address inside the Haar/P-Adic wavelet tree.
+    This entirely abolishes Euclidean space mappings (Gibbs artifacts).
     """
 
-    def __init__(self, d_coord: int, n_frequencies: int = 32, sigma: float = 10.0):
+    def __init__(self, p: int, L: int, d_coord: int = 1, embed_dim: int = 16):
         super().__init__()
-        B = torch.randn(d_coord, n_frequencies) * sigma
-        self.register_buffer("B", B)
-        self.out_dim = n_frequencies * 2
+        self.p = p
+        self.L = L
+        self.d_coord = d_coord
+        self.embed_dim = embed_dim
+        # A unique categorical lookup for each branching layer avoids representation collapse
+        self.level_embeddings = nn.ModuleList([
+            nn.Embedding(p, embed_dim) for _ in range(L * d_coord)
+        ])
+        self.out_dim = L * d_coord * embed_dim
 
     def forward(self, x: Tensor) -> Tensor:
-        """x: (..., d_coord) -> (..., n_frequencies * 2)"""
-        proj = 2 * math.pi * x @ self.B  # (..., n_frequencies)
-        return torch.cat([torch.sin(proj), torch.cos(proj)], dim=-1)
+        """x: (..., d_coord) -> (..., out_dim)"""
+        # (..., d_coord, L)
+        addr = padic_address(x, L=self.L, p=self.p).long()
+        
+        # Safely cap values inside the prime base (categorical safety constraint)
+        addr = torch.clamp(addr, 0, self.p - 1)
+        
+        embeddings = []
+        idx = 0
+        for d in range(self.d_coord):
+            for l in range(self.L):
+                digit = addr[..., d, l]
+                emb = self.level_embeddings[idx](digit)
+                embeddings.append(emb)
+                idx += 1
+                
+        return torch.cat(embeddings, dim=-1)
 
 
 class MLP(nn.Module):
@@ -66,6 +83,12 @@ class PAdicBlock(nn.Module):
             content_blend=content_blend,
             dropout=dropout
         )
+        # Spectral Kozyrev/Vladimirov Layer (O(N) Haar-basis evaluation)
+        self.spectral_layer = PAdicIntegralLayer(d_model=d_model)
+        
+        # Learnable topological blend between Global Attention and Spectral Wavelet integration
+        self.spectral_blend = nn.Parameter(torch.tensor(0.5))
+
         self.gamma_1 = nn.Parameter(
             layer_scale_init_value * torch.ones((d_model)), requires_grad=True
         ) if layer_scale_init_value > 0 else None
@@ -82,15 +105,21 @@ class PAdicBlock(nn.Module):
         ) if layer_scale_init_value > 0 else None
 
     def forward(self, v, x):
-        # Attention path
+        # Neural Operator Dual Pathways
         res = v
-        v = self.norm1(v)
-        v = self.attn(v, x)
+        v_norm = self.norm1(v)
+        
+        v_attn = self.attn(v_norm, x)
+        v_spec = self.spectral_layer(v_norm, x)
+        
+        b = torch.sigmoid(self.spectral_blend)
+        v_mixed = b * v_attn + (1 - b) * v_spec
+        
         if self.gamma_1 is not None:
-            v = self.gamma_1 * v
-        v = v + res
+            v_mixed = self.gamma_1 * v_mixed
+        v = v_mixed + res
 
-        # MLP path
+        # MLP Component
         res = v
         v = self.norm2(v)
         v = self.mlp(v)
@@ -131,10 +160,10 @@ class PAdicNeuralOperator(nn.Module):
 
         # Fourier positional encoding for grid coordinates
         self.d_coord = d_coord
-        self.pos_enc = FourierPositionalEncoding(
-            d_coord=d_coord, n_frequencies=n_fourier_freq, sigma=fourier_sigma
+        self.pos_enc = PAdicPositionalEncoding(
+            p=p, L=L, d_coord=d_coord, embed_dim=16
         )
-        # Lifting: input features + positional encoding → d_model
+        # Lifting: input features + positional embedding → d_model
         self.lifting = nn.Linear(d_in + self.pos_enc.out_dim, d_model)
 
         self.blocks = nn.ModuleList([
@@ -172,11 +201,11 @@ class PAdicNeuralOperator(nn.Module):
         # Ensure x is strictly < 1.0 for p-adic address safety
         x = x.clamp(0.0, 1.0 - 1e-6)
 
-        # Fourier positional encoding of coordinates
-        pos_features = self.pos_enc(x)  # (B, N, n_freq*2)
+        # Parse physical coordinates through discrete Haar wavelet tree
+        pos_features = self.pos_enc(x)  
 
-        # Concatenate input features with positional encoding before lifting
-        v = torch.cat([v, pos_features], dim=-1)  # (B, N, d_in + n_freq*2)
+        # Concatenate input physics features with discrete positional embedding before lifting
+        v = torch.cat([v, pos_features], dim=-1)  
 
         # 1. Lift to model dimension
         v = self.lifting(v)

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from torch.amp import autocast, GradScaler
 from tqdm import tqdm
-from ..utils.metrics import RelativeL2Loss
+from ..utils.metrics import RelativeL2Loss, SobolevLoss
 
 
 class PNOTrainer:
@@ -24,12 +24,18 @@ class PNOTrainer:
         use_amp=True,
         early_stopping_patience=0,
         grid_dims=1,
+        use_sobolev=False,
+        sobolev_lambda=0.5,
     ):
         self.model = model.to(device)
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.device = device
-        self.criterion = RelativeL2Loss()
+        
+        if use_sobolev:
+            self.criterion = SobolevLoss(lmbda=sobolev_lambda)
+        else:
+            self.criterion = RelativeL2Loss()
         self.experiment_manager = experiment_manager
         self.grad_clip_norm = grad_clip_norm
         self.grid_dims = grid_dims  # number of trailing coordinate dimensions

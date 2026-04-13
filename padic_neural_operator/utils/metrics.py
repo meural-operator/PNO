@@ -23,6 +23,41 @@ class RelativeL2Loss(nn.Module):
         return loss.mean()
 
 
+class SobolevLoss(nn.Module):
+    """
+    H1 Sobolev Loss: Computes standard relative L2 error + relative L2 error of the spatial gradients.
+    This natively enforces shock wave steepness constraints without relying on heuristic clamping.
+    
+    Formula: sqrt( (||u - pred||_2^2 + lambda * ||Du - Dpred||_2^2) / (||u||_2^2 + lambda * ||Du||_2^2) )
+    """
+    def __init__(self, eps=1e-8, lmbda=0.5):
+        super().__init__()
+        self.eps = eps
+        self.lmbda = lmbda
+
+    def forward(self, pred: Tensor, target: Tensor) -> Tensor:
+        # Base pointwise L2 loss squared
+        diff_sq = torch.sum((pred - target) ** 2, dim=1)
+        target_sq = torch.sum(target ** 2, dim=1)
+        
+        # Spatial Gradient (Forward difference along the spatial sequence)
+        pred_diff = pred[:, 1:] - pred[:, :-1]
+        target_diff = target[:, 1:] - target[:, :-1]
+        
+        grad_diff_sq = torch.sum((pred_diff - target_diff) ** 2, dim=1)
+        grad_target_sq = torch.sum(target_diff ** 2, dim=1)
+        
+        # Rigorous aggregate Relative H1 constraint. 
+        # The denominator relies on the base energy field (target_sq), guaranteeing 
+        # algorithmic stability globally without arbitrary constant clamps!
+        numerator = diff_sq + self.lmbda * grad_diff_sq
+        denominator = target_sq + self.lmbda * grad_target_sq
+        
+        loss = torch.sqrt(numerator / (denominator + self.eps))
+        
+        return loss.mean()
+
+
 class LinfError(nn.Module):
     """Relative L-infinity error: max|pred - target| / max|target|."""
     def __init__(self, eps=1e-8):
