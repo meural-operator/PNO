@@ -5,45 +5,7 @@ import torch.nn as nn
 from padic_neural_operator.layers.attention import PAdicAttention
 from padic_neural_operator.layers.integral import PAdicIntegralLayer
 from padic_neural_operator.core.padic import padic_address
-class PAdicPositionalEncoding(nn.Module):
-    """
-    P-Adic Positional Encoding for spatial coordinates.
 
-    Maps coordinates x in [0,1)^d via their structural base-p digit expansion
-    to represent their exact coordinate address inside the Haar/P-Adic wavelet tree.
-    This entirely abolishes Euclidean space mappings (Gibbs artifacts).
-    """
-
-    def __init__(self, p: int, L: int, d_coord: int = 1, embed_dim: int = 16):
-        super().__init__()
-        self.p = p
-        self.L = L
-        self.d_coord = d_coord
-        self.embed_dim = embed_dim
-        # A unique categorical lookup for each branching layer avoids representation collapse
-        self.level_embeddings = nn.ModuleList([
-            nn.Embedding(p, embed_dim) for _ in range(L * d_coord)
-        ])
-        self.out_dim = L * d_coord * embed_dim
-
-    def forward(self, x: Tensor) -> Tensor:
-        """x: (..., d_coord) -> (..., out_dim)"""
-        # (..., d_coord, L)
-        addr = padic_address(x, L=self.L, p=self.p).long()
-        
-        # Safely cap values inside the prime base (categorical safety constraint)
-        addr = torch.clamp(addr, 0, self.p - 1)
-        
-        embeddings = []
-        idx = 0
-        for d in range(self.d_coord):
-            for l in range(self.L):
-                digit = addr[..., d, l]
-                emb = self.level_embeddings[idx](digit)
-                embeddings.append(emb)
-                idx += 1
-                
-        return torch.cat(embeddings, dim=-1)
 
 
 class MLP(nn.Module):
@@ -158,13 +120,15 @@ class PAdicNeuralOperator(nn.Module):
     ):
         super().__init__()
 
-        # Fourier positional encoding for grid coordinates
         self.d_coord = d_coord
-        self.pos_enc = PAdicPositionalEncoding(
-            p=p, L=L, d_coord=d_coord, embed_dim=16
-        )
-        # Lifting: input features + positional embedding → d_model
-        self.lifting = nn.Linear(d_in + self.pos_enc.out_dim, d_model)
+        
+        # PURE OPERATOR LIFTING
+        # Instead of artificially creating positional encodings using Euclidean
+        # Fourier harmonics (which ruins the pure p-adic claim of the paper), 
+        # we append the raw spatial coordinate channels directly to the input physics channels.
+        # The true P-Adic geometry is intrinsically enforced during the spectral phase 
+        # inside the Haar-Integral and PAdic-Attention blocks.
+        self.lifting = nn.Linear(d_in + d_coord, d_model)
 
         self.blocks = nn.ModuleList([
             PAdicBlock(
@@ -198,16 +162,15 @@ class PAdicNeuralOperator(nn.Module):
         Returns:
             Output features (Batch, N_points, d_out)
         """
-        # Ensure x is strictly < 1.0 for p-adic address safety
+        # Ensure x is strictly < 1.0 for p-adic topological bound safety
         x = x.clamp(0.0, 1.0 - 1e-6)
 
-        # Parse physical coordinates through discrete Haar wavelet tree
-        pos_features = self.pos_enc(x)  
+        # 1. PURE KERNEL LIFTING
+        # Concatenate raw uniform coordinates. We avoid harmonic Sine/Cosine embeddings
+        # leaving all space-structuring logic strictly to the P-Adic components.
+        v = torch.cat([v, x], dim=-1)  
 
-        # Concatenate input physics features with discrete positional embedding before lifting
-        v = torch.cat([v, pos_features], dim=-1)  
-
-        # 1. Lift to model dimension
+        # 2. Lift to model dimension
         v = self.lifting(v)
 
         # 2. Iterative P-Adic processing
