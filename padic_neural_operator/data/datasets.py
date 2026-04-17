@@ -176,28 +176,36 @@ class DarcyFlow2DDataset(PDE2DDataset):
         return x_in, u_flat
 
 
-# ---------------------------------------------------------------------------
-# 3D Navier-Stokes (CFD Turbulence)
-# ---------------------------------------------------------------------------
+def compute_z_order_indices_3d(grid_shape):
+    Z_dim, Y_dim, X_dim = grid_shape
+    num_bits_x = int(np.ceil(np.log2(X_dim)))
+    num_bits_y = int(np.ceil(np.log2(Y_dim)))
+    num_bits_z = int(np.ceil(np.log2(Z_dim)))
+    max_bits = max(num_bits_x, num_bits_y, num_bits_z)
+    
+    z, y, x = np.meshgrid(np.arange(Z_dim), np.arange(Y_dim), np.arange(X_dim), indexing='ij')
+    morton = np.zeros_like(x, dtype=np.int64)
+    for i in range(max_bits):
+        bx = (x >> i) & 1
+        by = (y >> i) & 1
+        bz = (z >> i) & 1
+        morton |= (bx << (3*i)) | (by << (3*i + 1)) | (bz << (3*i + 2))
+    return np.argsort(morton.flatten())
 
 class NS3DDataset(PDE3DDataset):
     """
     3D Navier-Stokes CFD Turbulence from HDF5.
-    Maps state at t=0 to state at t_target (autoregressive-compatible).
-
-    HDF5 keys: 'Vx','Vy','Vz','density','pressure' — each (N, T, 64, 64, 64)
-
-    This dataset is very large — subsampling is strongly recommended.
-
-    Input:  (N_pts, d_in) where d_in = 5 (Vx,Vy,Vz,density,pressure) + 3 (coords)
-    Output: (N_pts, 5) at target time
+    Maps state at t=0 to state at t_target.
+    Features internally generated Z-Order curves to topologically map 3D Euclidean 
+    hierarchies natively down to 1D Bruhat-Tits trees required by pure PNO architectures.
     """
-
-    def __init__(self, file_path, sub=4, t_input_idx=0, t_target_idx=-1, **kwargs):
+    def __init__(self, file_path, sub=2, t_input_idx=0, t_target_idx=-1, **kwargs):
         super().__init__(file_path, **kwargs)
         self.sub = sub
         self.t_input_idx = t_input_idx
         self.t_target_idx = t_target_idx
+        
+        self.fields = ["Vx", "Vy", "Vz", "density", "pressure"]
 
         with h5py.File(self.file_path, "r") as f:
             total = f["Vx"].shape[0]
@@ -205,17 +213,37 @@ class NS3DDataset(PDE3DDataset):
             self.length = self.end_idx - self.start_idx
 
             # Build 3D grid normalised to [0,1)
-            x = torch.tensor(f["x-coordinate"][:], dtype=torch.float32)[::sub]
-            y = torch.tensor(f["y-coordinate"][:], dtype=torch.float32)[::sub]
-            z = torch.tensor(f["z-coordinate"][:], dtype=torch.float32)[::sub]
-            x = (x - x.min()) / (x.max() - x.min() + 1e-8)
-            y = (y - y.min()) / (y.max() - y.min() + 1e-8)
-            z = (z - z.min()) / (z.max() - z.min() + 1e-8)
-            gx, gy, gz = torch.meshgrid(x, y, z, indexing="ij")
-            self.grid = torch.stack([gx.flatten(), gy.flatten(), gz.flatten()], dim=-1)
+            x_c = torch.tensor(f["x-coordinate"][:], dtype=torch.float32)[::sub]
+            y_c = torch.tensor(f["y-coordinate"][:], dtype=torch.float32)[::sub]
+            z_c = torch.tensor(f["z-coordinate"][:], dtype=torch.float32)[::sub]
+            
+            x_c = (x_c - x_c.min()) / (x_c.max() - x_c.min() + 1e-8)
+            y_c = (y_c - y_c.min()) / (y_c.max() - y_c.min() + 1e-8)
+            z_c = (z_c - z_c.min()) / (z_c.max() - z_c.min() + 1e-8)
+            
+            self.res_shape = (len(z_c), len(y_c), len(x_c))
+            
+            gx, gy, gz = torch.meshgrid(x_c, y_c, z_c, indexing="ij")
+            grid_flat = torch.stack([gx.flatten(), gy.flatten(), gz.flatten()], dim=-1)
+            
+            # Topological mapping directly into Z curve for spatial proximity
+            self._z_order = compute_z_order_indices_3d(self.res_shape)
+            self.grid = grid_flat[self._z_order, :]
 
-        self.res = len(x)
-        self.fields = ["Vx", "Vy", "Vz", "density", "pressure"]
+            # Normalization Statistics Extraction
+            print(f"[{self.split}] Generating robust statistics for 3D normalization...")
+            stat_samples = min(10, self.length)
+            sample_idx = [self.start_idx + int(i) for i in np.linspace(0, self.length-1, stat_samples)]
+            
+            v_list = []
+            for idx in sample_idx:
+                b_comps = [f[fd][idx, self.t_input_idx, ::sub, ::sub, ::sub] for fd in self.fields]
+                v_list.append(np.stack(b_comps, axis=-1))
+            
+            v_tensor = torch.tensor(np.array(v_list), dtype=torch.float32)
+            self.u_mean = torch.mean(v_tensor, dim=(0, 1, 2, 3), keepdim=True).view(1, -1)
+            self.u_std = torch.std(v_tensor, dim=(0, 1, 2, 3), keepdim=True).view(1, -1) + 1e-6
+            print(f"[{self.split}] Extracted 3D Std: {self.u_std.squeeze()}")
 
     def __len__(self):
         return self.length
@@ -223,6 +251,7 @@ class NS3DDataset(PDE3DDataset):
     def __getitem__(self, idx):
         actual_idx = self.start_idx + idx
         s = self.sub
+        
         inp_fields, tgt_fields = [], []
         with h5py.File(self.file_path, "r") as f:
             for field in self.fields:
@@ -233,6 +262,15 @@ class NS3DDataset(PDE3DDataset):
 
         inp_stack = torch.stack(inp_fields, dim=-1)    # (N_pts, 5)
         tgt_stack = torch.stack(tgt_fields, dim=-1)    # (N_pts, 5)
+        
+        # 1. Normalize
+        inp_stack = (inp_stack - self.u_mean) / self.u_std
+        tgt_stack = (tgt_stack - self.u_mean) / self.u_std
+        
+        # 2. Z-Order Toplogy Sort (Mathematical Magic bindings)
+        inp_stack = inp_stack[self._z_order, :]
+        tgt_stack = tgt_stack[self._z_order, :]
+        
         x_in = torch.cat([inp_stack, self.grid], dim=-1)  # (N_pts, 8)
         return x_in, tgt_stack
 

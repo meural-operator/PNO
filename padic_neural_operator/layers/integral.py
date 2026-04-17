@@ -2,101 +2,145 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 import math
+import torch.nn.functional as F
 
+def create_dct_matrix(p: int) -> Tensor:
+    """Returns a purely orthogonal (real-valued) DCT-II matrix of size p x p."""
+    idx = torch.arange(p, dtype=torch.float32)
+    k, n = torch.meshgrid(idx, idx, indexing="ij")
+    
+    matrix = torch.cos(math.pi * k * (2 * n + 1) / (2 * p))
+    matrix[0, :] *= 1 / math.sqrt(2)
+    matrix *= math.sqrt(2 / p)
+    
+    return matrix
 
-def haar_transform_1d(x: Tensor) -> Tensor:
+def base_p_wavelet_transform(x: Tensor, L: int, dct_mat: Tensor) -> tuple[list[Tensor], Tensor]:
     """
-    1D Haar wavelet transform.
-    Input: x of shape (..., N) where N = 2^L.
-    Executes in O(N) by recursively splitting into sums and differences.
+    Forward Base-p wavelet transform.
+    Args:
+        x: Tensor of shape (B, C, p^L)
+        L: Tree depth
+        dct_mat: (p, p) orthogonal basis matrix (first row is uniform average).
+    Returns:
+        List containing detail coefficients (from finest to coarsest),
+        and the final root scale average tensor.
     """
-    N = x.size(-1)
-    result = x.clone()
-    h = N
-    while h > 1:
-        half = h // 2
-        # Averages and differences for the current scale
-        avg = (result[..., :h:2] + result[..., 1:h:2]) / 2.0
-        diff = (result[..., :h:2] - result[..., 1:h:2]) / 2.0
+    p = dct_mat.size(0)
+    current = x
+    coeffs = []
+    
+    for l in range(L):
+        B, C, H = current.shape
+        current_g = current.view(B, C, H // p, p)
         
-        # In-place update for PyTorch graph tracking
-        result = result.clone()
-        result[..., :half] = avg
-        result[..., half:h] = diff
-        h = half
+        # Apply orthogonal projection over the local p-group
+        transformed = torch.matmul(current_g, dct_mat.t())
         
-    return result
+        # The first component is the normalized average (coarse signal for next step)
+        coarse = transformed[..., 0]
+        
+        # The remaining p-1 components securely hold the orthogonal details
+        details = transformed[..., 1:]
+        
+        coeffs.append(details)
+        current = coarse
+    
+    # coeffs[0] is finest scale, coeffs[-1] is coarsest details before root.
+    return coeffs, current
 
-
-def inverse_haar_transform_1d(x: Tensor) -> Tensor:
+def inverse_base_p_wavelet_transform(coeffs: list[Tensor], root: Tensor, L: int, dct_mat: Tensor) -> Tensor:
     """
-    Inverse 1D Haar wavelet transform.
-    Input: x of shape (..., N) where N = 2^L.
-    Executes in O(N).
+    Inverse Base-p wavelet transform via exact deterministic inversion.
     """
-    N = x.size(-1)
-    result = x.clone()
-    h = 2
-    while h <= N:
-        half = h // 2
-        avg = result[..., :half]
-        diff = result[..., half:h]
+    p = dct_mat.size(0)
+    current = root
+    
+    # Reconstruct from coarsest down to finest
+    for l in reversed(range(L)):
+        details = coeffs[l]
+        B, C, H_over_p, p_minus_1 = details.shape
         
-        # Interleave to reconstruct signal
-        even = avg + diff
-        odd = avg - diff
+        combined = torch.cat([current.unsqueeze(-1), details], dim=-1)
+        reconstructed = torch.matmul(combined, dct_mat)
         
-        result = result.clone()
-        result[..., :h:2] = even
-        result[..., 1:h:2] = odd
+        current = reconstructed.view(B, C, -1)
         
-        h *= 2
-        
-    return result
+    return current
 
 
 class PAdicIntegralLayer(nn.Module):
     """
     P-Adic Integral Operator Layer (Kozyrev/Vladimirov Layer).
     
-    Transforms Euclidean function space mapping into Haar discrete wavelet space,
-    executes the mathematically defined Kozyrev operator kernel (learned spectral weights),
-    and inverse transforms back.
+    Mathematically upgrades the architecture by strictly segregating
+    the spectral responses across distinct topological tree scales (defined by
+    Kozyrev's theorem), instead of flattening all scales into a generic convolution.
     
-    Time Complexity: O(N), replacing scaled O(N^2) pairwise distance matrices.
+    Fully dynamically aligns boundary grids to perfect p^L scaling spaces using replicate padding.
     """
-    
-    def __init__(self, d_model: int):
+    def __init__(self, d_model: int, p: int, L: int):
         super().__init__()
         self.d_model = d_model
+        self.p = p
+        self.L = L
         
-        # A 1D convolutional operator mixes spectral channels across all basis modes.
-        # This operates on Haar modes iteratively.
-        self.spectral_weights = nn.Conv1d(
-            in_channels=d_model, 
-            out_channels=d_model, 
-            kernel_size=1
-        )
+        self.register_buffer("dct_mat", create_dct_matrix(p))
+        
+        # Isolated spectral operators correctly parameterized depth-wise
+        self.scale_weights = nn.ModuleList([
+            nn.Conv1d(d_model, d_model, kernel_size=1) for _ in range(L)
+        ])
+        
+        # Root average integrator
+        self.root_weight = nn.Conv1d(d_model, d_model, kernel_size=1)
+
+    def _pad_to_power_of_p(self, v: Tensor) -> tuple[Tensor, int]:
+        """Dynamically pads the spatial length to the nearest structural capacity."""
+        B, C, N = v.shape
+        target_N = self.p ** self.L
+        
+        if N == target_N:
+            return v, 0
+            
+        if N > target_N:
+            raise ValueError(f"Input spatial length {N} exceeds tree capacity {target_N} (p={self.p}, L={self.L}). Increase depth L.")
+            
+        pad_size = target_N - N
+        # We use purely physical replicate padding bridging the boundary conditions safely
+        v_padded = F.pad(v, (0, pad_size), mode='replicate')
+        return v_padded, pad_size
 
     def forward(self, v: Tensor, x: Tensor = None) -> Tensor:
-        """
-        v: (B, N, d_model) -> we need Haar transform over N.
-        x: Coordinates (unused natively as Haar transform acts topologically).
-        """
-        # Permute to (B, d_model, N) for Haar transform over last dimension
+        # permute channels for 1D convolutions natively
         v_T = v.transpose(1, 2)
         
-        # O(N) Haar Transform
-        v_haar = haar_transform_1d(v_T)
+        # 1. Base-P strict topological grid alignment
+        v_padded, pad_len = self._pad_to_power_of_p(v_T)
         
-        # Learnable topological spectral mixing (Integral Kozyrev Kernels)
-        # Note: In standard PDE neural operator architectures, we could modulate this
-        # with an activation or complex filtering, but linear transforms over the wavelet
-        # basis is intrinsically scale-independent.
-        v_haar = self.spectral_weights(v_haar)
+        # 2. Project into Haar-like discrete scaling space
+        coeffs, root = base_p_wavelet_transform(v_padded, self.L, self.dct_mat)
         
-        # O(N) Inverse Haar Transform
-        out_T = inverse_haar_transform_1d(v_haar)
+        # 3. Modulate eigenvalues via independent linear transforms bound by Kozyrev structure
+        new_coeffs = []
+        for l in range(self.L):
+            details = coeffs[l] 
+            B, C, H_over_p, p_minus_1 = details.shape
+            
+            details_flat = details.reshape(B, C, -1)
+            out = self.scale_weights[l](details_flat)
+            new_coeffs.append(out.reshape(B, C, H_over_p, p_minus_1))
+            
+        B, C, root_H = root.shape 
+        root_out = self.root_weight(root.reshape(B, C, -1)).reshape(B, C, root_H)
         
-        # Permute back to (B, N, d_model)
+        # 4. Invert projection mapping
+        out_padded = inverse_base_p_wavelet_transform(new_coeffs, root_out, self.L, self.dct_mat)
+        
+        # 5. Safe clipping of boundary projection
+        if pad_len > 0:
+            out_T = out_padded[..., :-pad_len]
+        else:
+            out_T = out_padded
+            
         return out_T.transpose(1, 2)

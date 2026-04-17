@@ -46,7 +46,7 @@ class PAdicBlock(nn.Module):
             dropout=dropout
         )
         # Spectral Kozyrev/Vladimirov Layer (O(N) Haar-basis evaluation)
-        self.spectral_layer = PAdicIntegralLayer(d_model=d_model)
+        self.spectral_layer = PAdicIntegralLayer(d_model=d_model, p=p, L=L)
         
         # Learnable topological blend between Global Attention and Spectral Wavelet integration
         self.spectral_blend = nn.Parameter(torch.tensor(0.5))
