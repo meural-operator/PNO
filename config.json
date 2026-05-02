@@ -1,0 +1,22 @@
+{
+  "experiment_name": "PNO_Wavelet_DiffSorp",
+  "dataset": {
+    "h5_path": "C:\\Users\\DIAT\\ashish\\neural_operators\\datasets\\1D_diff-sorp_NA_NA.h5",
+    "train_ratio": 0.8
+  },
+  "model": {
+    "in_channels": 4,
+    "out_channels": 100,
+    "hidden_channels": 64,
+    "num_blocks": 4,
+    "p": 2,
+    "n": 10
+  },
+  "training": {
+    "epochs": 50,
+    "batch_size": 16,
+    "learning_rate": 0.0002,
+    "weight_decay": 1e-05,
+    "save_every": 10
+  }
+}
