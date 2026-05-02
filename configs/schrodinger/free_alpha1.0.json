@@ -1,8 +1,8 @@
 {
-    "experiment_name": "PNO_Wavelet_Schrodinger_Free_Alpha0.5",
+    "experiment_name": "PNO_Wavelet_Schrodinger_Free_Alpha1.0",
     "dataset": {
         "name": "PAdicSchrodinger",
-        "h5_path": "C:\\Users\\DIAT\\ashish\\neural_operators\\datasets\\PAdicSchrodinger_free_alpha0.5.hdf5",
+        "h5_path": "C:\\Users\\DIAT\\ashish\\neural_operators\\datasets\\PAdicSchrodinger_free_alpha1.0.hdf5",
         "train_ratio": 0.8,
         "n_x": 1024,
         "out_t": 100,
@@ -12,8 +12,8 @@
     "model": {
         "in_channels": 4,
         "out_channels": 200,
-        "hidden_channels": 64,
-        "num_blocks": 4,
+        "hidden_channels": 128,
+        "num_blocks": 6,
         "p": 2,
         "n": 10
     },

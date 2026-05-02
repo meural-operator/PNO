@@ -16,6 +16,7 @@ from torch.utils.data import DataLoader
 from data.dataset import DiffusionSorptionDataset, ReactionDiffusionDataset
 from data.pdebench_dataset import PDEBench1DDataset
 from data.schrodinger_dataset import PAdicSchrodingerDataset
+from data.fokker_planck_dataset import FokkerPlanckDataset
 from models.pno import PAdicNeuralOperator
 from utils import LpLoss, UnitGaussianNormalizer
 
@@ -51,7 +52,7 @@ def setup_run_dir(config_path, base_dir="runs"):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, default="config.json", help="Path to config file")
+    parser.add_argument("--config", type=str, default="configs/diffusion_sorption/base.json", help="Path to config file")
     parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint .pth file to resume from")
     args = parser.parse_args()
     
@@ -108,10 +109,21 @@ def main():
         train_dataset = PAdicSchrodingerDataset(h5_path, split='train', train_ratio=train_ratio, **schro_kwargs)
         val_dataset   = PAdicSchrodingerDataset(h5_path, split='val',   train_ratio=train_ratio, **schro_kwargs)
 
+    elif dataset_name == 'FokkerPlanck':
+        # P-adic Fokker-Planck (protein conformational dynamics, ABK model).
+        # Input:  (4, M)      = [p_0, grid, V(x), zeros]
+        # Output: (out_t, M)  = [p(t_1), ..., p(t_out_t)]
+        fp_kwargs = dict(
+            n_x   = config['dataset'].get('n_x',   1024),
+            out_t = config['dataset'].get('out_t', 100),
+        )
+        train_dataset = FokkerPlanckDataset(h5_path, split='train', train_ratio=train_ratio, **fp_kwargs)
+        val_dataset   = FokkerPlanckDataset(h5_path, split='val',   train_ratio=train_ratio, **fp_kwargs)
+
     else:
         raise ValueError(f"Unknown dataset name: '{dataset_name}'. "
                          f"Choose from: DiffusionSorption, ReactionDiffusion, "
-                         f"PDEBench1D, PAdicSchrodinger.")
+                         f"PDEBench1D, PAdicSchrodinger, FokkerPlanck.")
     
     train_loader = DataLoader(train_dataset, batch_size=config['training']['batch_size'], shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=config['training']['batch_size'], shuffle=False)

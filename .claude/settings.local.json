@@ -2,7 +2,16 @@
   "permissions": {
     "allow": [
       "Bash(python3)",
-      "Bash(awk '{print $9, $5}')"
+      "Bash(awk '{print $9, $5}')",
+      "Bash(del config.json config_reacdiff.json config_reacdiff_rho10.json config_burgers_nu0.1.json config_burgers_nu0.01.json config_burgers_nu0.001.json config_allencahn_eps0.01.json config_allencahn_eps0.005.json config_advection_beta1.0.json config_schrodinger_free_alpha0.5.json config_schrodinger_free_alpha1.0.json config_schrodinger_free_alpha1.5.json config_schrodinger_potential_alpha1.0.json)",
+      "Bash(python -m data.fokker_planck_generator --case diffusion --alpha 1.0 --verify)",
+      "Bash(conda run *)",
+      "Read(//c/Users/DIAT/miniconda3/envs//**)",
+      "Read(//c/Users/DIAT/anaconda3/**)",
+      "Bash(/c/Users/DIAT/miniconda3/envs/turbo_nigo/python.exe -m data.fokker_planck_generator --case diffusion --alpha 1.0 --verify)",
+      "Bash(/c/Users/DIAT/miniconda3/envs/turbo_nigo/python.exe -m data.fokker_planck_generator --case diffusion --alpha 0.5 --verify)",
+      "Bash(/c/Users/DIAT/miniconda3/envs/turbo_nigo/python.exe -)",
+      "Bash(2>&1)"
     ]
   }
 }
