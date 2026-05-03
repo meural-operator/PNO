@@ -17,6 +17,7 @@ from data.dataset import DiffusionSorptionDataset, ReactionDiffusionDataset
 from data.pdebench_dataset import PDEBench1DDataset
 from data.schrodinger_dataset import PAdicSchrodingerDataset
 from data.fokker_planck_dataset import FokkerPlanckDataset
+from data.ks_dataset import KuramotoSivashinskyDataset
 from models.pno import PAdicNeuralOperator
 from utils import LpLoss, UnitGaussianNormalizer
 
@@ -120,21 +121,39 @@ def main():
         train_dataset = FokkerPlanckDataset(h5_path, split='train', train_ratio=train_ratio, **fp_kwargs)
         val_dataset   = FokkerPlanckDataset(h5_path, split='val',   train_ratio=train_ratio, **fp_kwargs)
 
+    elif dataset_name == 'KuramotoSivashinsky':
+        # Kuramoto-Sivashinsky chaotic PDE (single-shot prediction).
+        # Input:  (in_t + 1, M)  = [u(t_0), ..., u(t_{in_t-1}), grid]
+        # Output: (out_t, M)     = [u(t_{in_t}), ..., u(t_{in_t + out_t - 1})]
+        ks_kwargs = dict(
+            in_t  = config['dataset'].get('in_t',  256),
+            out_t = config['dataset'].get('out_t', 512),
+        )
+        train_dataset = KuramotoSivashinskyDataset(h5_path, split='train', **ks_kwargs)
+        val_dataset   = KuramotoSivashinskyDataset(h5_path, split='val',   **ks_kwargs)
+
     else:
         raise ValueError(f"Unknown dataset name: '{dataset_name}'. "
                          f"Choose from: DiffusionSorption, ReactionDiffusion, "
-                         f"PDEBench1D, PAdicSchrodinger, FokkerPlanck.")
+                         f"PDEBench1D, PAdicSchrodinger, FokkerPlanck, "
+                         f"KuramotoSivashinsky.")
     
     train_loader = DataLoader(train_dataset, batch_size=config['training']['batch_size'], shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=config['training']['batch_size'], shuffle=False)
     
     print("Fitting normalizers...")
+    # For large datasets (e.g. KS with 40K samples), only sample a subset
+    # for normalizer fitting to avoid OOM.
+    normalizer_samples = config['dataset'].get('normalizer_samples', len(train_dataset))
+    normalizer_samples = min(normalizer_samples, len(train_dataset))
     x_train_list, y_train_list = [], []
-    for x, y in train_dataset:
+    for i in range(normalizer_samples):
+        x, y = train_dataset[i]
         x_train_list.append(x)
         y_train_list.append(y)
     x_train = torch.stack(x_train_list)
     y_train = torch.stack(y_train_list)
+    print(f"  Normalizer fitted on {normalizer_samples} samples")
     
     x_normalizer = UnitGaussianNormalizer(x_train)
     y_normalizer = UnitGaussianNormalizer(y_train)

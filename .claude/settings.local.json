@@ -11,7 +11,8 @@
       "Bash(/c/Users/DIAT/miniconda3/envs/turbo_nigo/python.exe -m data.fokker_planck_generator --case diffusion --alpha 1.0 --verify)",
       "Bash(/c/Users/DIAT/miniconda3/envs/turbo_nigo/python.exe -m data.fokker_planck_generator --case diffusion --alpha 0.5 --verify)",
       "Bash(/c/Users/DIAT/miniconda3/envs/turbo_nigo/python.exe -)",
-      "Bash(2>&1)"
+      "Bash(2>&1)",
+      "Bash(xargs wc *)"
     ]
   }
 }

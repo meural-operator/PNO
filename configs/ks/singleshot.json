@@ -1,0 +1,26 @@
+{
+    "experiment_name": "PNO_KuramotoSivashinsky_SingleShot",
+    "dataset": {
+        "name": "KuramotoSivashinsky",
+        "h5_path": "C:\\Users\\DIAT\\ashish\\nigo\\datasets\\KS_ML_DATASET.h5",
+        "in_t": 256,
+        "out_t": 512,
+        "train_ratio": 0.8,
+        "normalizer_samples": 2000
+    },
+    "model": {
+        "in_channels": 257,
+        "out_channels": 512,
+        "hidden_channels": 128,
+        "num_blocks": 6,
+        "p": 2,
+        "n": 9
+    },
+    "training": {
+        "epochs": 100,
+        "batch_size": 8,
+        "learning_rate": 0.0005,
+        "weight_decay": 1e-5,
+        "save_every": 10
+    }
+}

@@ -6,8 +6,10 @@ class UnitGaussianNormalizer(object):
     def __init__(self, x, eps=1e-5):
         super(UnitGaussianNormalizer, self).__init__()
         # x could be in shape of [N, C, M]
-        self.mean = torch.mean(x, dim=0)
-        self.std = torch.std(x, dim=0)
+        # We compute mean and std across Batch (dim=0) AND Spatial (dim=2)
+        # to ensure the normalizer is translation-invariant.
+        self.mean = torch.mean(x, dim=(0, 2), keepdim=True)
+        self.std = torch.std(x, dim=(0, 2), keepdim=True)
         self.eps = eps
 
     def encode(self, x):
@@ -15,12 +17,8 @@ class UnitGaussianNormalizer(object):
         return x
 
     def decode(self, x, sample_idx=None):
-        if sample_idx is None:
-            std = self.std + self.eps
-            mean = self.mean
-        else:
-            std = self.std[sample_idx] + self.eps
-            mean = self.mean[sample_idx]
+        std = self.std + self.eps
+        mean = self.mean
         x = (x * std) + mean
         return x
 
